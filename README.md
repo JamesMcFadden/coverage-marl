@@ -4,6 +4,15 @@ Multi-agent reinforcement learning experiment: heterogeneous team coordination v
 graph attention network (GAT) communication layer, trained with PPO (MAPPO-style
 centralized-critic / decentralized-actor setup).
 
+## Setup
+
+Dependencies and the virtual environment are managed with [uv](https://docs.astral.sh/uv/).
+
+```
+uv sync                                    # install/update the environment from uv.lock
+uv run scripts/random_rollout.py           # milestone 1: random-policy sanity check
+```
+
 ## Task
 
 `CoverageWorld` is a cooperative PettingZoo `ParallelEnv`: a team of two roles,
