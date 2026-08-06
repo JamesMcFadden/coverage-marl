@@ -1,4 +1,4 @@
-run_name: milestone3_heterogeneous_nocomm
+run_name: milestone4_gat
 
 env:
   num_roles: 2
@@ -13,7 +13,8 @@ env:
 
 model:
   hidden_dim: 64
-  comm_aggregation: none
+  comm_aggregation: gat
+  gat_heads: 4
 
 train:
   total_timesteps: 300000

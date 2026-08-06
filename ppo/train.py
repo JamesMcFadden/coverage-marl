@@ -36,12 +36,15 @@ def main():
     obs_dim = env.observation_space(env.possible_agents[0]).shape[0]
     action_dim = env.action_space(env.possible_agents[0]).n
 
+    model_cfg = cfg.get("model", {})
     policy = MultiRolePolicy(
         roles=roles,
         obs_dim=obs_dim,
         action_dim=action_dim,
         state_dim=env.state_size,
-        hidden_dim=train_cfg.get("hidden_dim", 64),
+        hidden_dim=model_cfg.get("hidden_dim", 64),
+        comm_aggregation=model_cfg.get("comm_aggregation", "none"),
+        gat_heads=model_cfg.get("gat_heads", 4),
     ).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=train_cfg.get("lr", 3e-4))
 

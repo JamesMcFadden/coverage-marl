@@ -12,6 +12,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from env.coverage_world import CoverageWorld
 from models.policy import MultiRolePolicy
+from ppo.rollout import build_edge_index
 
 
 def main():
@@ -31,13 +32,23 @@ def main():
 
     env = CoverageWorld(**cfg.get("env", {}), render_mode="rgb_array")
     obs, _ = env.reset(seed=args.seed)
+    agent_order = env.possible_agents
+    agent_to_idx = {a: i for i, a in enumerate(agent_order)}
 
     roles = sorted(set(env.roles.values()))
-    obs_dim = env.observation_space(env.possible_agents[0]).shape[0]
-    action_dim = env.action_space(env.possible_agents[0]).n
-    hidden_dim = cfg["train"].get("hidden_dim", 64)
+    obs_dim = env.observation_space(agent_order[0]).shape[0]
+    action_dim = env.action_space(agent_order[0]).n
+    model_cfg = cfg.get("model", {})
 
-    policy = MultiRolePolicy(roles, obs_dim, action_dim, env.state_size, hidden_dim)
+    policy = MultiRolePolicy(
+        roles,
+        obs_dim,
+        action_dim,
+        env.state_size,
+        hidden_dim=model_cfg.get("hidden_dim", 64),
+        comm_aggregation=model_cfg.get("comm_aggregation", "none"),
+        gat_heads=model_cfg.get("gat_heads", 4),
+    )
     policy.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     policy.eval()
 
@@ -46,12 +57,8 @@ def main():
 
     with torch.no_grad():
         while env.agents:
-            actions = {}
-            for agent in env.agents:
-                role = env.roles[agent]
-                obs_t = torch.as_tensor(obs[agent]).unsqueeze(0)
-                logits = policy.actors[role](obs_t)
-                actions[agent] = int(torch.argmax(logits, dim=-1).item())
+            edge_index = torch.as_tensor(build_edge_index(env, agent_to_idx))
+            actions = policy.act_greedy(obs, env.roles, agent_order, edge_index, "cpu")
             obs, rewards, _, _, _ = env.step(actions)
             for a, r in rewards.items():
                 episode_reward[a] += r
