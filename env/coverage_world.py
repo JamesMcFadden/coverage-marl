@@ -5,7 +5,7 @@ import numpy as np
 from gymnasium import spaces
 from pettingzoo import ParallelEnv
 
-from .entities import ROLE_PARAMS, Site
+from .entities import ROLE_INDEX, ROLE_PARAMS, Site
 
 # Discrete movement actions: stay, up, down, left, right.
 _MOVES = {
@@ -18,7 +18,10 @@ _MOVES = {
 
 # Number of nearest sensed sites included in each agent's observation.
 K_SITES_OBS = 3
-OBS_DIM = 2 + 2 + K_SITES_OBS * 3
+NUM_ROLE_TYPES = len(ROLE_INDEX)
+OBS_DIM = 2 + NUM_ROLE_TYPES + K_SITES_OBS * 3
+# Per-site global-state features: normalized position (2) + status one-hot (4).
+SITE_STATE_DIM = 6
 
 
 class CoverageWorld(ParallelEnv):
@@ -35,6 +38,8 @@ class CoverageWorld(ParallelEnv):
 
     def __init__(
         self,
+        num_roles: int = 2,
+        num_agents: int = 4,
         num_scouts: int = 2,
         num_actors: int = 2,
         num_sites: int = 6,
@@ -45,6 +50,12 @@ class CoverageWorld(ParallelEnv):
         expire_after_detect: int = 50,
         render_mode: Optional[str] = None,
     ):
+        """num_roles=1 spawns `num_agents` identical generalist agents (the
+        homogeneous baseline); num_roles=2 spawns the scout/actor split
+        (num_scouts + num_actors), which is the default and matches
+        milestone 1's behavior.
+        """
+        self.num_roles = num_roles
         self.num_scouts = num_scouts
         self.num_actors = num_actors
         self.num_sites = num_sites
@@ -55,10 +66,14 @@ class CoverageWorld(ParallelEnv):
         self.expire_after_detect = expire_after_detect
         self.render_mode = render_mode
 
-        self.possible_agents = [f"scout_{i}" for i in range(num_scouts)] + [
-            f"actor_{i}" for i in range(num_actors)
-        ]
-        self.roles = {a: ("scout" if a.startswith("scout") else "actor") for a in self.possible_agents}
+        if num_roles == 1:
+            self.possible_agents = [f"agent_{i}" for i in range(num_agents)]
+            self.roles = {a: "generalist" for a in self.possible_agents}
+        else:
+            self.possible_agents = [f"scout_{i}" for i in range(num_scouts)] + [
+                f"actor_{i}" for i in range(num_actors)
+            ]
+            self.roles = {a: ("scout" if a.startswith("scout") else "actor") for a in self.possible_agents}
         self.agents = list(self.possible_agents)
 
         self._rng = np.random.default_rng()
@@ -119,7 +134,7 @@ class CoverageWorld(ParallelEnv):
             if site.serviced or site.expired or not site.detected:
                 continue
             for agent in self.agents:
-                if self.roles[agent] != "actor":
+                if not ROLE_PARAMS[self.roles[agent]]["can_service"]:
                     continue
                 if np.linalg.norm(self.positions[agent] - site.pos) <= self.service_radius:
                     site.serviced = True
@@ -157,13 +172,40 @@ class CoverageWorld(ParallelEnv):
                     edges.append((a, b))
         return edges
 
+    @property
+    def state_size(self):
+        return len(self.possible_agents) * 2 + self.num_sites * SITE_STATE_DIM
+
+    def state(self):
+        """Global state for the centralized critic: all agents' normalized
+        positions plus all sites' normalized positions and status one-hot.
+        Valid to call right after step(), before any reset.
+        """
+        agent_part = np.concatenate(
+            [(self.positions[a] / self.world_size) * 2 - 1 for a in self.possible_agents]
+        )
+        site_parts = []
+        for site in self.sites:
+            pos_norm = (site.pos / self.world_size) * 2 - 1
+            if site.expired:
+                status = [0.0, 0.0, 0.0, 1.0]
+            elif site.serviced:
+                status = [0.0, 0.0, 1.0, 0.0]
+            elif site.detected:
+                status = [0.0, 1.0, 0.0, 0.0]
+            else:
+                status = [1.0, 0.0, 0.0, 0.0]
+            site_parts.append(np.concatenate([pos_norm, np.array(status, dtype=np.float32)]))
+        return np.concatenate([agent_part] + site_parts).astype(np.float32)
+
     def _observe(self, agent):
         role = self.roles[agent]
         pos = self.positions[agent]
         sensor_radius = ROLE_PARAMS[role]["sensor_radius"]
 
         own_pos_norm = (pos / self.world_size) * 2 - 1
-        role_onehot = np.array([1.0, 0.0] if role == "scout" else [0.0, 1.0], dtype=np.float32)
+        role_onehot = np.zeros(NUM_ROLE_TYPES, dtype=np.float32)
+        role_onehot[ROLE_INDEX[role]] = 1.0
 
         visible = []
         for site in self.sites:
@@ -222,7 +264,7 @@ class CoverageWorld(ParallelEnv):
             pa, pb = self.positions[a], self.positions[b]
             ax.plot([pa[0], pb[0]], [pa[1], pb[1]], color="#555555", linewidth=0.8, linestyle="--", zorder=2)
 
-        role_colors = {"scout": "#3d7ae8", "actor": "#8a3de8"}
+        role_colors = {"scout": "#3d7ae8", "actor": "#8a3de8", "generalist": "#c93fd1"}
         for agent in self.possible_agents:
             pos = self.positions.get(agent)
             if pos is None:
