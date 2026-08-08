@@ -48,12 +48,19 @@ class CoverageWorld(ParallelEnv):
         service_radius: float = 6.0,
         comm_range: float = 20.0,
         expire_after_detect: int = 50,
+        comm_bonus: float = 0.0,
         render_mode: Optional[str] = None,
     ):
         """num_roles=1 spawns `num_agents` identical generalist agents (the
         homogeneous baseline); num_roles=2 spawns the scout/actor split
         (num_scouts + num_actors), which is the default and matches
         milestone 1's behavior.
+
+        comm_bonus: per-step reward to a detecting agent (e.g. a scout) for
+        being within comm_range of a service-capable agent (e.g. an actor)
+        while its detected site is still pending (not yet serviced/expired).
+        Shaping to encourage the detector to stay in range to relay what it
+        found; 0.0 (the default) reproduces milestones 1-4's reward exactly.
         """
         self.num_roles = num_roles
         self.num_scouts = num_scouts
@@ -64,6 +71,7 @@ class CoverageWorld(ParallelEnv):
         self.service_radius = service_radius
         self.comm_range = comm_range
         self.expire_after_detect = expire_after_detect
+        self.comm_bonus = comm_bonus
         self.render_mode = render_mode
 
         if num_roles == 1:
@@ -118,6 +126,7 @@ class CoverageWorld(ParallelEnv):
 
         shared_reward = -0.01
         detection_bonus = {a: 0.0 for a in self.agents}
+        comm_proximity_bonus = {a: 0.0 for a in self.agents}
 
         for site in self.sites:
             if site.serviced or site.expired or site.detected:
@@ -126,6 +135,7 @@ class CoverageWorld(ParallelEnv):
                 sensor_radius = ROLE_PARAMS[self.roles[agent]]["sensor_radius"]
                 if np.linalg.norm(self.positions[agent] - site.pos) <= sensor_radius:
                     site.detected = True
+                    site.detected_by = agent
                     site.expire_timer = self.expire_after_detect
                     detection_bonus[agent] += 0.1
                     break
@@ -141,6 +151,19 @@ class CoverageWorld(ParallelEnv):
                     shared_reward += 1.0
                     break
 
+        if self.comm_bonus:
+            service_capable = [a for a in self.agents if ROLE_PARAMS[self.roles[a]]["can_service"]]
+            pending_detectors = {
+                site.detected_by
+                for site in self.sites
+                if site.detected and not site.serviced and not site.expired
+            }
+            if service_capable:
+                for agent in pending_detectors:
+                    nearest = min(np.linalg.norm(self.positions[agent] - self.positions[a]) for a in service_capable)
+                    if nearest <= self.comm_range:
+                        comm_proximity_bonus[agent] += self.comm_bonus
+
         for site in self.sites:
             if site.detected and not site.serviced and not site.expired:
                 site.expire_timer -= 1
@@ -151,7 +174,7 @@ class CoverageWorld(ParallelEnv):
         terminated = all(site.serviced or site.expired for site in self.sites)
         truncated = self.step_count >= self.max_steps
 
-        rewards = {a: shared_reward + detection_bonus[a] for a in self.agents}
+        rewards = {a: shared_reward + detection_bonus[a] + comm_proximity_bonus[a] for a in self.agents}
         terminations = {a: terminated for a in self.agents}
         truncations = {a: truncated for a in self.agents}
         infos = {a: {} for a in self.agents}

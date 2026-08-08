@@ -8,8 +8,9 @@ env:
   world_size: 100.0
   max_steps: 200
   service_radius: 6.0
-  comm_range: 20.0
+  comm_range: 40.0
   expire_after_detect: 50
+  comm_bonus: 0.01
 
 model:
   hidden_dim: 64
@@ -17,7 +18,7 @@ model:
   graph_connectivity: range
 
 train:
-  total_timesteps: 500000
+  total_timesteps: 1000000
   rollout_length: 2048
   gamma: 0.99
   gae_lambda: 0.95

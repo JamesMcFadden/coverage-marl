@@ -25,6 +25,7 @@ class Site:
     site_id: int
     pos: np.ndarray
     detected: bool = False
+    detected_by: Optional[str] = None
     expire_timer: Optional[int] = None
     serviced: bool = False
     expired: bool = False
