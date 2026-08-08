@@ -1,0 +1,31 @@
+run_name: milestone5_ablation_gat_full
+
+env:
+  num_roles: 2
+  num_scouts: 2
+  num_actors: 2
+  num_sites: 6
+  world_size: 100.0
+  max_steps: 200
+  service_radius: 6.0
+  comm_range: 20.0
+  expire_after_detect: 50
+
+model:
+  hidden_dim: 64
+  comm_aggregation: gat
+  graph_connectivity: full
+  gat_heads: 4
+
+train:
+  total_timesteps: 500000
+  rollout_length: 2048
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  value_coef: 0.5
+  entropy_coef: 0.01
+  epochs: 4
+  minibatch_size: 256
+  lr: 0.0003
+  seed: 0

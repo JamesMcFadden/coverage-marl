@@ -1,5 +1,7 @@
-"""Roll out a trained policy greedily (argmax actions) and render it to a
-GIF, for visually sanity-checking learned behavior against a config/checkpoint.
+"""Render a trained GAT-communication policy's rollout with attention
+weights overlaid on the comms graph (milestone 5 deliverable): an arrow
+from agent A to agent B, with width proportional to how much B's policy
+attends to A, shows who's actually being listened to at each step.
 """
 import argparse
 import os
@@ -26,9 +28,13 @@ def main():
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
+    model_cfg = cfg.get("model", {})
+    if model_cfg.get("comm_aggregation") != "gat":
+        raise ValueError("render_attention.py requires a config with model.comm_aggregation: gat")
+
     run_name = cfg.get("run_name", os.path.splitext(os.path.basename(args.config))[0])
     checkpoint = args.checkpoint or os.path.join("runs", run_name, "model.pt")
-    out = args.out or os.path.join("replays", f"{run_name}_trained_rollout.gif")
+    out = args.out or os.path.join("replays", f"{run_name}_attention.gif")
 
     env = CoverageWorld(**cfg.get("env", {}), render_mode="rgb_array")
     obs, _ = env.reset(seed=args.seed)
@@ -36,17 +42,13 @@ def main():
     agent_to_idx = {a: i for i, a in enumerate(agent_order)}
 
     roles = sorted(set(env.roles.values()))
-    obs_dim = env.observation_space(agent_order[0]).shape[0]
-    action_dim = env.action_space(agent_order[0]).n
-    model_cfg = cfg.get("model", {})
-
     policy = MultiRolePolicy(
         roles,
-        obs_dim,
-        action_dim,
+        env.observation_space(agent_order[0]).shape[0],
+        env.action_space(agent_order[0]).n,
         env.state_size,
         hidden_dim=model_cfg.get("hidden_dim", 64),
-        comm_aggregation=model_cfg.get("comm_aggregation", "none"),
+        comm_aggregation="gat",
         gat_heads=model_cfg.get("gat_heads", 4),
     )
     policy.load_state_dict(torch.load(checkpoint, map_location="cpu"))
@@ -56,29 +58,27 @@ def main():
     full_edge_index = build_full_edge_index(len(agent_order)) if graph_connectivity == "full" else None
 
     frames = [env.render()]
-    episode_reward = {a: 0.0 for a in env.agents}
 
     with torch.no_grad():
         while env.agents:
             edge_index_np = full_edge_index if graph_connectivity == "full" else build_edge_index(env, agent_to_idx)
             edge_index = torch.as_tensor(edge_index_np)
-            actions = policy.act_greedy(obs, env.roles, agent_order, edge_index, "cpu")
-            obs, rewards, _, _, _ = env.step(actions)
-            for a, r in rewards.items():
-                episode_reward[a] += r
-            frames.append(env.render())
+            actions, attn = policy.act_greedy(obs, env.roles, agent_order, edge_index, "cpu", return_attention=True)
 
-    serviced = sum(1 for s in env.sites if s.serviced)
-    expired = sum(1 for s in env.sites if s.expired)
-    rounded_rewards = {a: round(r, 2) for a, r in episode_reward.items()}
-    print(
-        f"trained rollout: serviced={serviced}/{len(env.sites)} expired={expired} "
-        f"reward_by_agent={rounded_rewards}"
-    )
+            attention_edges = []
+            if attn is not None:
+                edge_index_out, alpha = attn
+                weights = alpha.mean(dim=-1)  # average over attention heads -> (E,)
+                for e in range(edge_index_out.shape[1]):
+                    src_i, dst_i = int(edge_index_out[0, e]), int(edge_index_out[1, e])
+                    attention_edges.append((agent_order[src_i], agent_order[dst_i], float(weights[e])))
+
+            obs, _, _, _, _ = env.step(actions)
+            frames.append(env.render(attention_edges=attention_edges))
 
     os.makedirs(os.path.dirname(out), exist_ok=True)
     imageio.mimsave(out, frames, fps=10)
-    print(f"saved rollout gif to {out}")
+    print(f"saved attention rollout gif to {out}")
 
 
 if __name__ == "__main__":

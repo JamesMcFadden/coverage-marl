@@ -47,6 +47,7 @@ def main():
         gat_heads=model_cfg.get("gat_heads", 4),
     ).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=train_cfg.get("lr", 3e-4))
+    graph_connectivity = model_cfg.get("graph_connectivity", "range")
 
     rollout_length = train_cfg["rollout_length"]
     total_timesteps = train_cfg["total_timesteps"]
@@ -60,7 +61,9 @@ def main():
     start_time = time.time()
 
     for update in range(1, num_updates + 1):
-        buffer, episode_summaries, obs = collect_rollout(env, policy, rollout_length, device, obs=obs)
+        buffer, episode_summaries, obs = collect_rollout(
+            env, policy, rollout_length, device, obs=obs, graph_connectivity=graph_connectivity
+        )
         global_step += rollout_length
 
         advantages, returns = {}, {}

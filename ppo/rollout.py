@@ -17,6 +17,20 @@ def build_edge_index(env, agent_to_idx):
     return np.array([src, dst], dtype=np.int64)
 
 
+def build_full_edge_index(n_agents):
+    """All-pairs bidirectional graph, ignoring comm range entirely - the
+    milestone 5 ablation testing whether GAT's benefit comes from learned
+    attention itself versus just having every agent's embedding available
+    regardless of distance. Constant across timesteps, so callers should
+    compute this once rather than per-step.
+    """
+    if n_agents <= 1:
+        return np.zeros((2, 0), dtype=np.int64)
+    src = [i for i in range(n_agents) for j in range(n_agents) if i != j]
+    dst = [j for i in range(n_agents) for j in range(n_agents) if i != j]
+    return np.array([src, dst], dtype=np.int64)
+
+
 def batch_edge_indices(edge_index_list, timestep_indices, n_nodes):
     """Combine several timesteps' (2, E_t) edge_index arrays into one graph
     of B*n_nodes nodes, offsetting each timestep's node indices by its
@@ -54,18 +68,24 @@ class RolloutBuffer:
 
 
 @torch.no_grad()
-def collect_rollout(env, policy, rollout_length, device, obs=None):
+def collect_rollout(env, policy, rollout_length, device, obs=None, graph_connectivity="range"):
     """Collect `rollout_length` env steps, resetting internally on episode
     end. `obs` carries the current observations across successive calls so
     training doesn't waste a reset between rollouts. Returns the filled
     buffer, a list of finished-episode summaries, and the observations to
     pass into the next call.
+
+    graph_connectivity="full" builds an all-pairs graph every step instead
+    of the distance-based one (milestone 5's "fully-connected attention"
+    ablation) - precomputed once since it never changes.
     """
     obs_dim = env.observation_space(env.possible_agents[0]).shape[0]
     agent_order = env.possible_agents
     agent_to_idx = {a: i for i, a in enumerate(agent_order)}
     buffer = RolloutBuffer(agent_order, obs_dim, env.state_size, rollout_length)
     episode_summaries = []
+
+    full_edge_index_np = build_full_edge_index(len(agent_order)) if graph_connectivity == "full" else None
 
     if obs is None:
         obs, _ = env.reset()
@@ -77,7 +97,7 @@ def collect_rollout(env, policy, rollout_length, device, obs=None):
         state = env.state()
         value = policy.value(torch.as_tensor(state, device=device).unsqueeze(0)).item()
 
-        edge_index_np = build_edge_index(env, agent_to_idx)
+        edge_index_np = full_edge_index_np if graph_connectivity == "full" else build_edge_index(env, agent_to_idx)
         edge_index = torch.as_tensor(edge_index_np, device=device)
         actions, logprobs = policy.step(obs, env.roles, agent_order, edge_index, device)
 

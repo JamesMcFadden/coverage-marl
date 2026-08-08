@@ -229,7 +229,12 @@ class CoverageWorld(ParallelEnv):
             [own_pos_norm, role_onehot, np.array(site_feats, dtype=np.float32)]
         ).astype(np.float32)
 
-    def render(self):
+    def render(self, attention_edges=None):
+        """attention_edges: optional list of (src_agent, dst_agent, weight)
+        for milestone 5's attention visualization - draws an arrow from src
+        to dst (message direction: how much dst attends to src) with width
+        scaled by weight, on top of the plain comm-range edges.
+        """
         import matplotlib
 
         if self.render_mode == "rgb_array":
@@ -263,6 +268,21 @@ class CoverageWorld(ParallelEnv):
         for a, b in self.comm_edges():
             pa, pb = self.positions[a], self.positions[b]
             ax.plot([pa[0], pb[0]], [pa[1], pb[1]], color="#555555", linewidth=0.8, linestyle="--", zorder=2)
+
+        if attention_edges:
+            max_w = max((w for _, _, w in attention_edges), default=0.0) or 1.0
+            for src, dst, w in attention_edges:
+                if src not in self.positions or dst not in self.positions:
+                    continue
+                p_src, p_dst = self.positions[src], self.positions[dst]
+                norm_w = w / max_w
+                ax.annotate(
+                    "",
+                    xy=p_dst,
+                    xytext=p_src,
+                    arrowprops=dict(arrowstyle="->", color="#d1453d", lw=0.5 + 4 * norm_w, alpha=0.7),
+                    zorder=2.5,
+                )
 
         role_colors = {"scout": "#3d7ae8", "actor": "#8a3de8", "generalist": "#c93fd1"}
         for agent in self.possible_agents:
